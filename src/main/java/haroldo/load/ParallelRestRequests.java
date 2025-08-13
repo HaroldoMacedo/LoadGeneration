@@ -20,47 +20,76 @@ public class ParallelRestRequests {
     public void sendTraffic(int virtualUsers, int totalRequests) {
         int plusOneIndex = totalRequests % virtualUsers;
 
-        List<CompletableFuture<String>> futures = IntStream.range(0, virtualUsers)
+        System.out.println("Starting virtual users");
+        List<List<CompletableFuture<String>>> futuresList = IntStream.range(0, virtualUsers)
                 .mapToObj((user) -> userTraffic(user, totalRequests / virtualUsers + (user < plusOneIndex ? 1 : 0)))
                 .collect(Collectors.toList());
+        System.out.println("Virtual users started");
 
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenAccept(v -> futures.forEach(f -> {
-                    try {
-                        System.out.println(f.get());
-                    } catch (Exception e) {
-                        System.err.println("Request failed: " + e.getMessage());
-                    }
-                }))
-                .join();
-    }
+        int vUser = 1;
+        for (var futures : futuresList) {
+            System.out.printf("Starting virtual user %d ?\n", vUser++);
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                    .thenAccept(v -> futures.forEach(f -> {
+                        try {
+                            System.out.println(f.get());
+                        } catch (Exception e) {
+                            System.err.println("Request failed: " + e.getMessage());
+                        }
+                    })).thenApply(response -> "Virtual user finished");
+        }
 
-
-    public CompletableFuture<String> userTraffic(int user, int requests) {
         try {
-            Thread.sleep(1000);
+            Thread.sleep(400);
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
-        List<CompletableFuture<String>> futures = IntStream.range(0, requests)
-                .mapToObj((i) -> sendRequest(user))
-                .collect(Collectors.toList());
 
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenAccept(v -> futures.forEach(f -> {
-                    try {
-                        System.out.println(f.get());
-                    } catch (Exception e) {
-                        System.err.println("Request failed: " + e.getMessage());
-                    }
-                }))
-                .join();
-
-        return new CompletableFuture<>();
+        for (var futures : futuresList) {
+            System.out.printf("Waiting for virtual user %d to finish\n", vUser++);
+            System.out.println(
+                    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                            .thenAccept(v -> futures.forEach(f -> {
+                                try {
+                                    System.out.println(f.get());
+                                } catch (Exception e) {
+                                    System.err.println("Request failed: " + e.getMessage());
+                                }
+                            })).join());
+        }
+//                .thenAccept(v -> f.forEach()
+//                        .(
+//    {
+////                .thenAccept(v -> futures.forEach(f -> {
+//                    try {
+//                        System.out.println(f.get());
+//                    } catch (Exception e) {
+//                        System.err.println("Request failed: " + e.getMessage());
+//                    }
+//                }))
+//                .join();
     }
 
 
-    private CompletableFuture<String> sendRequest(int id) {
+    public List<CompletableFuture<String>> userTraffic(int user, int requests) {
+//        List<CompletableFuture<String>> futures = IntStream.range(0, requests)
+        System.out.printf("User %d sending %d requests\n", user, requests);
+        return IntStream.range(0, requests)
+                .mapToObj((i) -> sendRequest(i, user))
+                .collect(Collectors.toList());
+
+//        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+//                .thenAccept(v -> futures.forEach(f -> {
+//                    try {
+//                        System.out.println(f.get());
+//                    } catch (Exception e) {
+//                        System.err.println("Request failed: " + e.getMessage());
+//                    }
+//                })).thenApply(response -> "Virtual user " + user + " finished!");
+    }
+
+
+    private CompletableFuture<String> sendRequest(int id, int user) {
         HttpClient client = HttpClient.newHttpClient();
 
         HttpRequest request = HttpRequest.newBuilder()
@@ -69,6 +98,6 @@ public class ParallelRestRequests {
                 .build();
 
         return client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenApply(response -> "Response " + id + ": " + response.body());
+                .thenApply(response -> "User " + user + " - response id " + id + ": " + response.body());
     }
 }
