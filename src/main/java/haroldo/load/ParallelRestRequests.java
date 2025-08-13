@@ -1,13 +1,14 @@
 package haroldo.load;
 
+import haroldo.load.measurement.Totals;
+
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 public class ParallelRestRequests {
 
@@ -17,87 +18,70 @@ public class ParallelRestRequests {
         this.url = "http://" + url;
     }
 
-    public void sendTraffic(int virtualUsers, int totalRequests) {
+    public void sendTraffic(int virtualUsers, int totalRequests, long thinkTimeMs) throws InterruptedException {
+        int requestCount = totalRequests / virtualUsers;
         int plusOneIndex = totalRequests % virtualUsers;
 
-        System.out.println("Starting virtual users");
-        List<List<CompletableFuture<String>>> futuresList = IntStream.range(0, virtualUsers)
-                .mapToObj((user) -> userTraffic(user, totalRequests / virtualUsers + (user < plusOneIndex ? 1 : 0)))
-                .collect(Collectors.toList());
-        System.out.println("Virtual users started");
+        List<Thread> threadList = new ArrayList<>();
 
-        int vUser = 1;
-        for (var futures : futuresList) {
-            System.out.printf("Starting virtual user %d ?\n", vUser++);
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                    .thenAccept(v -> futures.forEach(f -> {
-                        try {
-                            System.out.println(f.get());
-                        } catch (Exception e) {
-                            System.err.println("Request failed: " + e.getMessage());
-                        }
-                    })).thenApply(response -> "Virtual user finished");
+        System.out.println("Start calling '" + url + "' " + totalRequests + " with " +
+                virtualUsers + " virtual users using " + thinkTimeMs + "ms of think time");
+        for (int user = 0; user < virtualUsers; user++) {
+            Thread thread = Thread.startVirtualThread(new User(user, requestCount + (user < plusOneIndex ? 1 : 0), thinkTimeMs));
+            threadList.add(thread);
         }
 
-        try {
-            Thread.sleep(400);
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+        System.out.println("Waiting for all threads to finish");
 
-        for (var futures : futuresList) {
-            System.out.printf("Waiting for virtual user %d to finish\n", vUser++);
-            System.out.println(
-                    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                            .thenAccept(v -> futures.forEach(f -> {
-                                try {
-                                    System.out.println(f.get());
-                                } catch (Exception e) {
-                                    System.err.println("Request failed: " + e.getMessage());
-                                }
-                            })).join());
+        for (Thread thread : threadList) {
+            thread.join();
         }
-//                .thenAccept(v -> f.forEach()
-//                        .(
-//    {
-////                .thenAccept(v -> futures.forEach(f -> {
-//                    try {
-//                        System.out.println(f.get());
-//                    } catch (Exception e) {
-//                        System.err.println("Request failed: " + e.getMessage());
-//                    }
-//                }))
-//                .join();
+        System.out.println("End");
     }
 
+    class User implements Runnable {
+        private final int user;
+        private final int requests;
+        private final long thinkTimeMs;
 
-    public List<CompletableFuture<String>> userTraffic(int user, int requests) {
-//        List<CompletableFuture<String>> futures = IntStream.range(0, requests)
-        System.out.printf("User %d sending %d requests\n", user, requests);
-        return IntStream.range(0, requests)
-                .mapToObj((i) -> sendRequest(i, user))
-                .collect(Collectors.toList());
+        User(int user, int requests, long thinkTimeMs) {
+            this.user = user;
+            this.requests = requests;
+            this.thinkTimeMs = thinkTimeMs;
+        }
 
-//        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-//                .thenAccept(v -> futures.forEach(f -> {
-//                    try {
-//                        System.out.println(f.get());
-//                    } catch (Exception e) {
-//                        System.err.println("Request failed: " + e.getMessage());
-//                    }
-//                })).thenApply(response -> "Virtual user " + user + " finished!");
-    }
+        @Override
+        public void run() {
+            Totals responseMs = new Totals();
+            System.out.println("Starting user " + user + " calling " + requests + " times!");
 
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url)).GET().build();
 
-    private CompletableFuture<String> sendRequest(int id, int user) {
-        HttpClient client = HttpClient.newHttpClient();
+            for (int i = 0; i < requests; i++) {
+                if (user % 10 == 0 && i % 100 == 0)
+                    System.out.println("User " + user + " calling " + i);
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .GET()
-                .build();
+                try (HttpClient client = HttpClient.newHttpClient()) {
+                    long ms = System.currentTimeMillis();
+                    client.send(request, HttpResponse.BodyHandlers.ofString());
+                    responseMs.addInitialMs(ms);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                sleep(thinkTimeMs);
+            }
+            System.out.println("Ending user " + user + " - " + responseMs);
+        }
 
-        return client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenApply(response -> "User " + user + " - response id " + id + ": " + response.body());
+        void sleep(long sleepMs) {
+            try {
+                Thread.sleep(sleepMs);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
     }
 }
